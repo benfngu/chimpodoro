@@ -21,6 +21,7 @@ Mac's architecture. Apple Command Line Tools are required to build.
 ## Build and run
 
 ```sh
+chmod +x build.sh test.sh package.sh make-icon.sh
 ./build.sh
 open build/Chimpodoro.app
 ```
