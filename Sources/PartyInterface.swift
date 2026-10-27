@@ -5,6 +5,11 @@ enum ChimpAvatar {
         let colors: [String:NSColor] = ["ink":.labelColor, "sage":NSColor(srgbRed:0.25,green:0.48,blue:0.35,alpha:1), "blue":.systemBlue, "rose":.systemPink, "gold":.systemOrange]
         let color = colors[profile.color] ?? .labelColor
         let image = NSImage(size: NSSize(width:size,height:size), flipped:false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            // Isolate cutouts so they reveal the actual surface beneath the avatar.
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            defer { context.endTransparencyLayer() }
+            let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ChimpMark.draw(in: rect.insetBy(dx:size*0.06,dy:size*0.06), color:color, resting:resting)
             NSGraphicsContext.saveGraphicsState(); defer {NSGraphicsContext.restoreGraphicsState()}
             let transform = NSAffineTransform(); transform.scale(by:size/100); transform.concat()
@@ -23,6 +28,7 @@ enum ChimpAvatar {
                     for x in [CGFloat(40.375), CGFloat(59.625)] {
                         NSBezierPath(ovalIn: NSRect(x: x-4.1, y: 59.625-4.1, width: 8.2, height: 8.2)).fill()
                     }
+                    if dark { context.setBlendMode(.clear) }
                     NSColor.white.setFill()
                     let diameter = 76*scale
                     for x in [CGFloat(40.375), CGFloat(59.625)] {
@@ -30,6 +36,7 @@ enum ChimpAvatar {
                     }
                 }
                 glassesTransform.scale(by: scale); glassesTransform.concat()
+                if dark { context.setBlendMode(.clear) }
                 NSColor.white.setStroke()
                 for x in [CGFloat(380), CGFloat(671)] {
                     let frame = NSBezierPath(roundedRect: NSRect(x: x, y: 692, width: 201, height: 133),

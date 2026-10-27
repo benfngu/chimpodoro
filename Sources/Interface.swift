@@ -15,8 +15,32 @@ enum ChimpStyle {
     }
 }
 
+/// A native button with stable contrast even when the full-screen window loses key status.
+final class PrimaryTimerButton: NSButton {
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 18, yRadius: 18)
+        let fill = isEnabled ? NSColor.labelColor : NSColor.quaternaryLabelColor
+        fill.withAlphaComponent(isHighlighted ? 0.78 : 1).setFill()
+        shape.fill()
+        let font = NSFont.systemFont(ofSize: bounds.height >= 40 ? 14 : 13, weight: .semibold)
+        let text = NSAttributedString(string: title, attributes: [
+            .font: font, .foregroundColor: isEnabled ? NSColor.windowBackgroundColor : NSColor.secondaryLabelColor
+        ])
+        let size = text.size()
+        text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+        if window?.firstResponder === self && window?.isKeyWindow == true {
+            NSColor.keyboardFocusIndicatorColor.setStroke()
+            shape.lineWidth = 2; shape.stroke()
+        }
+    }
+}
+
 final class TimerSurface: NSView {
+    var onLayout: (() -> Void)?
+    override var acceptsFirstResponder: Bool { true }
+    override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self) }
     override var isFlipped: Bool { true }
+    override func layout() { super.layout(); onLayout?() }
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
         bounds.fill()
@@ -40,12 +64,12 @@ final class ProgressRing: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let circle = bounds.insetBy(dx: 4, dy: 4)
         let track = NSBezierPath(ovalIn: circle)
-        NSColor.labelColor.withAlphaComponent(0.025).setFill(); track.fill()
-        track.lineWidth = 2
+        NSColor.controlBackgroundColor.withAlphaComponent(0.45).setFill(); track.fill()
+        track.lineWidth = bounds.width > 300 ? 3 : 2
         NSColor.labelColor.withAlphaComponent(0.08).setStroke(); track.stroke()
         if progress > 0 {
             let arc = NSBezierPath()
-            arc.lineWidth = 2; arc.lineCapStyle = .round
+            arc.lineWidth = track.lineWidth; arc.lineCapStyle = .round
             arc.appendArc(withCenter: NSPoint(x: bounds.midX, y: bounds.midY), radius: circle.width / 2,
                           startAngle: 90, endAngle: 90 - CGFloat(min(1, progress)) * 360, clockwise: true)
             NSColor.labelColor.withAlphaComponent(resting ? 0.45 : 0.85).setStroke(); arc.stroke()
@@ -87,15 +111,22 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
     var skip: NSButton!
     var settings: NSButton!
     var partyButton: NSButton!
+    private let wordmark = ChimpStyle.label("Chimpodoro", size: 15, weight: .semibold)
+    private let taskLabel = ChimpStyle.label("Focus on", size: 11, weight: .medium)
+    private let taskCard = SurfaceCard()
+    private let divider = NSBox()
+    private var customize: NSButton!
+    private var desktop: NSButton!
+    private var lastWide: Bool?
+    private var lastPhase: PomodoroPhase?
     private let partyStrip = NSView()
     private var stripMembers: [PartyMember] = []
     private var stripResting = false
 
     override func loadView() {
         view = TimerSurface(frame: NSRect(x: 0, y: 0, width: 344, height: 532))
-        let wordmark = ChimpStyle.label("chimpodoro", size: 18, weight: .semibold)
         wordmark.frame = NSRect(x: 23, y: 22, width: 210, height: 26); view.addSubview(wordmark)
-        let desktop = NSButton(image:NSImage(systemSymbolName:"macwindow",accessibilityDescription:"Open desktop timer")!,target:self,action:#selector(openDesktop))
+        desktop = NSButton(image:NSImage(systemSymbolName:"macwindow",accessibilityDescription:"Open desktop timer")!,target:self,action:#selector(openDesktop))
         desktop.isBordered=false;desktop.contentTintColor = .secondaryLabelColor
         desktop.frame=NSRect(x:250,y:21,width:30,height:28);desktop.toolTip="Open desktop timer (⌘D)";desktop.isHidden = isDesktop; view.addSubview(desktop)
         settings = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")!, target: self, action: #selector(openSettings))
@@ -115,9 +146,8 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
         caption.alignment = .center; caption.textColor = .secondaryLabelColor
         caption.frame = NSRect(x: 86, y: 261, width: 172, height: 18); view.addSubview(caption)
         dots.frame = NSRect(x: 48, y: 332, width: 248, height: 12); view.addSubview(dots)
-        let taskCard = SurfaceCard(frame: NSRect(x: 23, y: 350, width: 298, height: 36))
+        taskCard.frame = NSRect(x: 23, y: 350, width: 298, height: 36)
         view.addSubview(taskCard)
-        let taskLabel = ChimpStyle.label("TASK", size: 9, weight: .semibold)
         taskLabel.textColor = .secondaryLabelColor
         taskLabel.frame = NSRect(x: 35, y: 362, width: 36, height: 14); view.addSubview(taskLabel)
         task.placeholderString = "What are you working on?"
@@ -127,7 +157,7 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
         task.setAccessibilityLabel("Focus task, optional")
         task.frame = NSRect(x: 79, y: 359, width: 230, height: 23)
         task.delegate = self; view.addSubview(task)
-        primary = ChimpStyle.button("Start focus", target: self, action: #selector(toggle))
+        primary = PrimaryTimerButton(title: "Start focus", target: self, action: #selector(toggle))
         primary.frame = NSRect(x: 23, y: 399, width: 194, height: 36)
         primary.bezelColor = .labelColor; primary.contentTintColor = .windowBackgroundColor
         primary.keyEquivalent = " "; primary.keyEquivalentModifierMask = []
@@ -140,23 +170,114 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
         skip.isBordered = false; skip.contentTintColor = .secondaryLabelColor
         skip.frame = NSRect(x: 277, y: 399, width: 44, height: 36)
         skip.toolTip = "Skip this session (⌘→). Skipped focus sessions are not counted."; view.addSubview(skip)
-        let divider = NSBox(frame: NSRect(x: 23, y: 445, width: 298, height: 1)); divider.boxType = .separator; view.addSubview(divider)
+        divider.frame = NSRect(x: 23, y: 445, width: 298, height: 1); divider.boxType = .separator; view.addSubview(divider)
         total.frame = NSRect(x: 20, y: 461, width: 304, height: 18)
         total.alignment = .center; total.textColor = .secondaryLabelColor; view.addSubview(total)
         partyStrip.frame=NSRect(x:25,y:453,width:294,height:32);view.addSubview(partyStrip)
         partyButton = ChimpStyle.button("Create / join party…", target:self, action:#selector(openParty))
         partyButton.isBordered = true; partyButton.font = .systemFont(ofSize: 12, weight: .medium)
         partyButton.contentTintColor = .secondaryLabelColor
-        let customize = ChimpStyle.button("Customize chimp…", target: self, action: #selector(customizeChimp))
+        customize = ChimpStyle.button("Customize chimp…", target: self, action: #selector(customizeChimp))
         customize.font = .systemFont(ofSize: 12, weight: .medium)
         customize.frame = NSRect(x: 23, y: 490, width: 143, height: 28)
         view.addSubview(customize)
         partyButton.frame = NSRect(x:174,y:490,width:147,height:28); view.addSubview(partyButton)
+        // Only the small mascot is layer-backed. No full-window raster surfaces.
+        mark.wantsLayer = true
+        (view as? TimerSurface)?.onLayout = { [weak self] in self?.layoutContents() }
+        layoutContents()
+    }
+
+    private func layoutContents() {
+        guard primary != nil else { return }
+        let width = view.bounds.width, height = view.bounds.height
+        let wide = isDesktop && width >= 780 && height >= 440
+        wordmark.isHidden = isDesktop
+        desktop.isHidden = isDesktop
+        taskCard.isHidden = isDesktop
+        let dial: NSRect
+        if wide {
+            // Cap the content width so controls remain within easy reach on large displays.
+            let contentWidth = min(width - 96, 1160)
+            let controlWidth: CGFloat = 310
+            let gap: CGFloat = 72
+            let diameter = min(contentWidth - controlWidth - gap, height - 140, 640)
+            let left = (width - (diameter + gap + controlWidth)) / 2
+            dial = NSRect(x: left, y: (height - diameter) / 2 - 14, width: diameter, height: diameter)
+            let x = dial.maxX + gap, y = (height - 360) / 2
+            modes.frame = NSRect(x: x, y: y, width: controlWidth, height: 30)
+            taskLabel.frame = NSRect(x: x + 2, y: y + 64, width: controlWidth, height: 18)
+            task.frame = NSRect(x: x + 2, y: y + 90, width: controlWidth - 4, height: 30)
+            task.font = .systemFont(ofSize: 18, weight: .regular)
+            primary.frame = NSRect(x: x, y: y + 148, width: controlWidth - 104, height: 42)
+            reset.frame = NSRect(x: x + controlWidth - 96, y: y + 148, width: 42, height: 42)
+            skip.frame = NSRect(x: x + controlWidth - 46, y: y + 148, width: 42, height: 42)
+            divider.frame = NSRect(x: x, y: y + 216, width: controlWidth, height: 1)
+            total.frame = NSRect(x: x, y: y + 240, width: controlWidth, height: 24)
+            partyStrip.frame = NSRect(x: x, y: y + 235, width: controlWidth, height: 32)
+            customize.frame = NSRect(x: x, y: y + 296, width: 148, height: 32)
+            partyButton.frame = NSRect(x: x + 158, y: y + 296, width: 152, height: 32)
+            dots.frame = NSRect(x: dial.minX, y: dial.maxY + 25, width: diameter, height: 12)
+            settings.frame = NSRect(x: width - 54, y: 16, width: 32, height: 28)
+        } else {
+            let column: CGFloat = isDesktop ? min(360, width - 48) : 298
+            let x = (width - column) / 2
+            let diameter: CGFloat = isDesktop ? min(320, max(214, height - 328)) : 214
+            let top: CGFloat = isDesktop ? max(54, (height - (diameter + 290)) / 2) : 70
+            modes.frame = NSRect(x: x, y: top, width: column, height: 28)
+            dial = NSRect(x: (width - diameter) / 2, y: top + 42, width: diameter, height: diameter)
+            dots.frame = NSRect(x: x, y: dial.maxY + 8, width: column, height: 12)
+            let taskY = dial.maxY + 32
+            taskCard.frame = NSRect(x: x, y: taskY - 8, width: column, height: 38)
+            taskLabel.frame = NSRect(x: x + 12, y: taskY + 3, width: 50, height: 17)
+            task.frame = NSRect(x: x + 70, y: taskY, width: column - 82, height: 25)
+            task.font = .systemFont(ofSize: 12)
+            let actionY = taskY + 42
+            primary.frame = NSRect(x: x, y: actionY, width: column - 104, height: 38)
+            reset.frame = NSRect(x: x + column - 96, y: actionY, width: 44, height: 38)
+            skip.frame = NSRect(x: x + column - 44, y: actionY, width: 44, height: 38)
+            divider.frame = NSRect(x: x, y: actionY + 50, width: column, height: 1)
+            total.frame = NSRect(x: x, y: actionY + 65, width: column, height: 20)
+            partyStrip.frame = NSRect(x: x, y: actionY + 58, width: column, height: 32)
+            customize.frame = NSRect(x: x, y: actionY + 98, width: (column - 8) / 2, height: 28)
+            partyButton.frame = NSRect(x: x + (column + 8) / 2, y: actionY + 98, width: (column - 8) / 2, height: 28)
+            settings.frame = NSRect(x: width - 58, y: isDesktop ? 8 : 21, width: 34, height: 28)
+        }
+        for index in 0..<3 { modes.setWidth((modes.frame.width - 10) / 3, forSegment: index) }
+        ring.frame = dial
+        let scale = dial.width / 214
+        let mascot = min(112, 60 * scale)
+        mark.frame = NSRect(x: dial.midX - mascot / 2, y: dial.minY + dial.height * 0.13, width: mascot, height: mascot)
+        let fontSize = min(112, 48 * scale)
+        time.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .light)
+        time.frame = NSRect(x: dial.minX + 10, y: dial.minY + dial.height * 0.40, width: dial.width - 20, height: fontSize * 1.3)
+        caption.font = .systemFont(ofSize: wide ? 14 : 11, weight: .medium)
+        caption.frame = NSRect(x: dial.minX + 16, y: dial.minY + dial.height * 0.73, width: dial.width - 32, height: 22)
+        layoutRoster()
+        if let previous = lastWide, previous != wide { animateMascot() }
+        lastWide = wide
+    }
+
+    private func layoutRoster() {
+        let start = (partyStrip.bounds.width - CGFloat(partyStrip.subviews.count) * 34) / 2
+        for (index, avatar) in partyStrip.subviews.enumerated() {
+            avatar.frame = NSRect(x: start + CGFloat(index) * 34, y: 0, width: 30, height: 30)
+        }
+    }
+
+    private func animateMascot() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              view.window?.isVisible == true, !view.inLiveResize else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.35; fade.toValue = 1; fade.duration = 0.22
+        mark.layer?.add(fade, forKey: "phaseTransition")
     }
 
     func render(_ engine: Pomodoro, at now: Date) {
         loadViewIfNeeded()
         if task.currentEditor() == nil { task.stringValue = owner?.taskName ?? "" }
+        if let previous = lastPhase, previous != engine.phase { animateMascot() }
+        lastPhase = engine.phase
         modes.selectedSegment = engine.phase == .focus ? 0 : engine.phase == .shortBreak ? 1 : 2
         let seconds = Int(ceil(engine.remaining(at: now)))
         time.stringValue = String(format: "%02d:%02d", seconds / 60, seconds % 60)
@@ -172,7 +293,7 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
         let canControl = owner?.party.joined != true || owner?.party.canControl == true
         if shownPrimaryTitle != primaryTitle {
             shownPrimaryTitle = primaryTitle
-            primary.attributedTitle = NSAttributedString(string: primaryTitle, attributes: [.foregroundColor: NSColor.windowBackgroundColor, .font: NSFont.systemFont(ofSize: 13, weight: .medium)])
+            primary.title = primaryTitle
         }
         primary.isEnabled = canControl; reset.isEnabled = canControl; skip.isEnabled = canControl; modes.isEnabled = canControl
         if let party = owner?.party, party.joined {
@@ -197,7 +318,7 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
         if members != stripMembers || resting != stripResting {
             stripMembers = members; stripResting = resting
             partyStrip.subviews.forEach { $0.removeFromSuperview() }
-            let start = (294-CGFloat(members.count)*34)/2
+            let start = (partyStrip.bounds.width-CGFloat(members.count)*34)/2
             for (index, member) in members.enumerated() {
                 let image=NSImageView(frame:NSRect(x:start+CGFloat(index)*34,y:0,width:30,height:30))
                 image.image=ChimpAvatar.image(member.profile,size:30,resting:resting)
@@ -208,13 +329,22 @@ final class TimerViewController: NSViewController, NSTextFieldDelegate {
         }
     }
 
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === task,
+              commandSelector == #selector(NSResponder.insertNewline(_:)) ||
+              commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        // End editing without forwarding Return/Escape into timer or window actions.
+        view.window?.makeFirstResponder(view)
+        return true
+    }
+
     func controlTextDidChange(_ obj: Notification) { taskEdited = true }
     func controlTextDidEndEditing(_ obj: Notification) {
         guard taskEdited else { return }; taskEdited = false
         let trimmed = String(task.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
         task.stringValue = trimmed; owner?.taskName = trimmed
     }
-    @objc func toggle() { view.window?.makeFirstResponder(nil); owner?.toggleTimer() }
+    @objc func toggle() { view.window?.makeFirstResponder(view); owner?.toggleTimer() }
     @objc func resetTimer() { owner?.resetTimer() }
     @objc func skipTimer() { owner?.skipTimer() }
     @objc func selectPhase() { owner?.selectPhase([.focus, .shortBreak, .longBreak][modes.selectedSegment]) }
@@ -255,6 +385,10 @@ final class SettingsController: NSWindowController {
             check.frame = NSRect(x: 23, y: CGFloat(254 + index * 31), width: 363, height: 22)
             content.addSubview(check); checks.append(check)
         }
+        checks[2].frame.size.width = 275
+        let preview = ChimpStyle.button("Test sound", target: self, action: #selector(testSound))
+        preview.frame = NSRect(x: 300, y: 312, width: 87, height: 28)
+        content.addSubview(preview)
         notice.stringValue = "Duration changes apply to the next fresh timer."
         notice.textColor = .secondaryLabelColor
         notice.frame = NSRect(x: 25, y: 422, width: 363, height: 18); content.addSubview(notice)
@@ -273,6 +407,12 @@ final class SettingsController: NSWindowController {
         notice.stringValue = owner.party.joined ? "Party durations are set when the host creates it." : "Duration changes apply to the next fresh timer."
         for (index, value) in [settings.focusMinutes, settings.shortBreakMinutes, settings.longBreakMinutes, settings.longBreakInterval].enumerated() { fields[index].integerValue = value }
         for (index, value) in [settings.autoStartBreaks, settings.autoStartFocus, owner.soundEnabled, owner.notificationsEnabled, owner.launchAtLogin].enumerated() { checks[index].state = value ? .on : .off }
+    }
+    @objc func testSound() {
+        guard let owner = appDelegate else { return }
+        notice.stringValue = owner.previewCompletionSound()
+            ? "Playing chime. Check your Mac’s volume and audio output."
+            : "Could not play the chime. Try reopening Chimpodoro."
     }
     @objc func cancel() { close() }
     @objc func save() {

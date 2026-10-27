@@ -3,6 +3,7 @@ import ServiceManagement
 import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
+    private let completionSound = CompletionSound()
     private let defaults = UserDefaults.standard
     private var soloEngine = Pomodoro()
     let party = PartyClient()
@@ -107,7 +108,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         let timerMenu = NSMenu(title: "Timer"); timerItem.submenu = timerMenu
         let reset = timerMenu.addItem(withTitle: "Reset timer", action: #selector(resetTimer), keyEquivalent: "r"); reset.target = self
         let skip = timerMenu.addItem(withTitle: "Skip session", action: #selector(skipTimer), keyEquivalent: String(UnicodeScalar(NSRightArrowFunctionKey)!)); skip.target = self
+        let viewItem = NSMenuItem(); bar.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View"); viewItem.submenu = viewMenu
+        let fullScreen = viewMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullScreen.keyEquivalentModifierMask = [.control, .command]
+        let moveDisplay = viewMenu.addItem(withTitle: "Move to Other Display", action: #selector(moveDesktopToOtherDisplay), keyEquivalent: "")
+        moveDisplay.target = self
         NSApp.mainMenu = bar
+    }
+
+    @objc private func moveDesktopToOtherDisplay() {
+        showDesktop()
+        desktop?.moveToOtherDisplay()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showDesktop(); return true }
@@ -119,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         party.shutdown()
     }
     func popoverDidShow(_ notification: Notification) {
-        popover.contentViewController?.view.window?.makeFirstResponder(nil)
+        if let view = popover.contentViewController?.view { view.window?.makeFirstResponder(view) }
         pulse()
     }
     func popoverDidClose(_ notification: Notification) { pulse() }
@@ -171,9 +183,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         completionPanel = panel
         panel.show()
         if soundEnabled && now.timeIntervalSince(completion.completedAt) < 90 {
-            NSSound(named: NSSound.Name("Glass"))?.play()
+            if !completionSound.play() { NSLog("Chimpodoro: completion sound could not play") }
         }
     }
+    @discardableResult
+    func previewCompletionSound() -> Bool { completionSound.play() }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(soloEngine) { defaults.set(data, forKey: "timerState") }
     }
