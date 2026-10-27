@@ -77,10 +77,11 @@ xcrun swiftc -swift-version 5 \
   -target "${architecture}-apple-macosx14.0" -sdk "$sdk" \
   -module-name Chimpodoro -module-cache-path "$PWD/build/ModuleCache" \
   -O -whole-module-optimization -gnone -Xlinker -dead_strip \
-  -framework AppKit -framework Security -framework UserNotifications -framework ServiceManagement \
+  -framework AppKit -framework AVFoundation -framework Security -framework UserNotifications -framework ServiceManagement \
   Sources/*.swift -o "$prepared/Contents/MacOS/Chimpodoro"
 
 cp Info.plist "$prepared/Contents/Info.plist"
+cp Assets/Completion.wav "$prepared/Contents/Resources/Completion.wav"
 cp Assets/Chimpodoro.icns "$prepared/Contents/Resources/Chimpodoro.icns"
 plutil -lint "$prepared/Contents/Info.plist"
 codesign --force --sign - --identifier local.ben.chimpodoro --timestamp=none "$prepared"

@@ -95,3 +95,9 @@ runtime has no dependency on the server's development tools or `node_modules`.
 The chimp geometry comes from the ChimpRace family mark. The stopwatch overlays
 the lower-right edge; the tomato appears only in the app icon. Glasses follow the
 ChimpRead frame design. Regenerate the icon with `./make-icon.sh`.
+
+## Version 1.2.0
+
+The desktop adapts to wide windows with the dial on the left and controls on the right. Native fullscreen, a Move to Other Display command, dark-mode glasses cutouts, and task-field focus fixes are included.
+
+A bundled 1.65-second three-note completion chime uses the normal audio output. Preview it with **Settings → Test sound**. One audio player is reused; previews restart rather than overlap. Sound remains optional and late returns stay quiet. Regenerate the original audio with `python3 Scripts/make-chime.py`.
